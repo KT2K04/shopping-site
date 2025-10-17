@@ -12,57 +12,6 @@ services:
     networks:
       - msnet
 
-  kong-database:
-    image: postgres:13
-    environment:
-      POSTGRES_USER: kong
-      POSTGRES_DB: kong
-      POSTGRES_PASSWORD: kong
-    volumes:
-      - kong_data:/var/lib/postgresql/data
-    networks:
-      - msnet
-
-  kong-migrations:
-    image: kong:3.7
-    command: kong migrations bootstrap
-    depends_on:
-      - kong-database
-    environment:
-      KONG_DATABASE: postgres
-      KONG_PG_HOST: kong-database
-      KONG_PG_USER: kong
-      KONG_PG_PASSWORD: kong
-      KONG_PASSWORD: kong
-    networks:
-      - msnet
-
-  kong:
-    image: kong:3.7
-    restart: always
-    depends_on:
-      - kong-database
-      - kong-migrations
-      - user-service
-      - order-service
-      - inventory-service
-    environment:
-      KONG_DATABASE: postgres
-      KONG_PG_HOST: kong-database
-      KONG_PG_USER: kong
-      KONG_PG_PASSWORD: kong
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
-      KONG_PROXY_LISTEN: 0.0.0.0:8000
-    ports:
-      - "8000:8000" # public API gateway port
-      - "8001:8001" # admin API (internal)
-    networks:
-      - msnet
-
   user-service:
     build: ./user-service
     environment:
@@ -106,8 +55,28 @@ services:
     networks:
       - msnet
 
-volumes:
-  kong_data:
+  frontend:
+    build: ./frontend
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+    ports:
+      - "3005:3000"
+    networks:
+      - msnet
+
+  api-gateway:
+    build: ./api-gateway
+    environment:
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - user-service
+      - order-service
+      - inventory-service
+      - notification-service
+    networks:
+      - msnet
 
 networks:
   msnet:
