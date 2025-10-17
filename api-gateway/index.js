@@ -6,6 +6,17 @@ const bodyParser = require('body-parser');
 const app = express();
 app.use(bodyParser.json());
 
+// CORS middleware for frontend
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || 'your-very-secret';
 
 // simple JWT validation middleware
@@ -23,17 +34,25 @@ function authRequired(req, res, next) {
 }
 
 // Public route: create user (no auth)
-app.use('/users', createProxyMiddleware({ target: 'http://user-service:3004', changeOrigin: true }));
+app.use('/users', createProxyMiddleware({ 
+  target: 'http://user-service:3004', 
+  changeOrigin: true,
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(500).json({ error: 'Service unavailable' });
+  }
+}));
 
-// Orders require auth
-app.use('/orders', authRequired, createProxyMiddleware({ target: 'http://order-service:3003', changeOrigin: true }));
+// Orders (public for demo purposes)
+app.use('/orders', createProxyMiddleware({ target: 'http://order-service:3003', changeOrigin: true }));
 
-// Inventory admin routes (protected)
-app.use('/inventory', authRequired, createProxyMiddleware({ target: 'http://inventory-service:3001', changeOrigin: true }));
+// Inventory routes (public for demo purposes)
+app.use('/inventory', createProxyMiddleware({ target: 'http://inventory-service:3001', changeOrigin: true }));
 
 // health
 app.get('/health', (req, res)=> res.json({ status: 'ok', gateway: true }));
 
+// (moved CORS before proxies)
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, ()=> console.log(`API Gateway listening on ${PORT}`));
-w

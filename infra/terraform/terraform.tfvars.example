@@ -1,0 +1,43 @@
+# Example Terraform variables file for Shopping Website Microservices
+# Copy this file to terraform.tfvars and customize the values
+# 
+# Usage:
+# 1. Copy this file: cp terraform.tfvars.example terraform.tfvars
+# 2. Edit terraform.tfvars with your specific values
+# 3. Run: terraform init && terraform plan && terraform apply
+
+# Application Configuration
+app_name    = "shopping-website"
+namespace   = "shopping-app"
+environment = "dev"
+
+# Kubernetes Configuration
+kubeconfig_path = "~/.kube/config"
+
+# Application Settings
+log_level   = "info"
+api_version = "v1"
+
+# Security Configuration (CHANGE THESE IN PRODUCTION!)
+jwt_secret        = "your-super-secret-jwt-key-change-this"
+db_password       = "your-secure-database-password"
+rabbitmq_password = "your-secure-rabbitmq-password"
+
+# Helm Chart Versions
+rabbitmq_chart_version = "11.8.0"
+ingress_chart_version  = "4.7.1"
+
+# Resource Configuration
+replicas        = 2
+cpu_requests    = "100m"
+memory_requests = "128Mi"
+cpu_limits      = "200m"
+memory_limits   = "256Mi"
+
+# Network Configuration
+ingress_host = "shopping-app.local"
+ingress_port = 80
+
+# Monitoring Configuration
+enable_monitoring = false
+enable_logging    = false
