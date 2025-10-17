@@ -1,214 +1,297 @@
-# Terraform configuration for Shopping Website Microservices
-# Demonstrates IaC for local Kubernetes deployment
-
+##############################
+# Terraform Initialization
+##############################
 terraform {
-  required_version = ">= 1.0"
   required_providers {
-    docker = {
-      source  = "kreuzwerker/docker"
-      version = "~> 3.0"
-    }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
+      version = "~> 2.27"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.11"
+      version = "~> 2.10"
     }
   }
 }
 
-provider "docker" {
-  host = "npipe:////.//pipe//docker_engine"
-}
-
+##############################
+# Provider Configuration
+##############################
 provider "kubernetes" {
-  config_path = var.kubeconfig_path
+  config_path = "~/.kube/config"
 }
 
 provider "helm" {
   kubernetes {
-    config_path = var.kubeconfig_path
+    config_path = "~/.kube/config"
   }
 }
 
-locals {
-  namespace   = var.namespace
-  app_name    = var.app_name
-  environment = var.environment
-}
-
-resource "kubernetes_namespace" "shopping_app" {
+##############################
+# Namespace for App
+##############################
+resource "kubernetes_namespace" "shopping" {
   metadata {
-    name = local.namespace
-    labels = {
-      name        = local.namespace
-      app         = local.app_name
-      environment = local.environment
-      managed-by  = "terraform"
-    }
+    name = "shopping-app"
   }
 }
 
-resource "kubernetes_config_map" "app_config" {
-  metadata {
-    name      = "${local.app_name}-config"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-    labels = {
-      app = local.app_name
-    }
-  }
-
-  data = {
-    ENVIRONMENT = local.environment
-    LOG_LEVEL   = var.log_level
-    API_VERSION = var.api_version
-  }
-}
-
-resource "kubernetes_secret" "app_secrets" {
-  metadata {
-    name      = "${local.app_name}-secrets"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-  }
-
-  type = "Opaque"
-
-  data = {
-    jwt-secret    = base64encode(var.jwt_secret)
-    db-password   = base64encode(var.db_password)
-    rabbitmq-pass = base64encode(var.rabbitmq_password)
-  }
-}
-
+##############################
+# RabbitMQ Helm Deployment
+##############################
 resource "helm_release" "rabbitmq" {
   name       = "rabbitmq"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "rabbitmq"
-  version    = var.rabbitmq_chart_version
-  namespace  = kubernetes_namespace.shopping_app.metadata[0].name
+  namespace  = kubernetes_namespace.shopping.metadata[0].name
+  version    = "11.8.0"
+
+  # Ensures RabbitMQ has enough time to initialize
+  timeout    = 600
+  atomic     = true
+  cleanup_on_fail = true
 
   values = [
     yamlencode({
       auth = {
         username = "guest"
-        password = var.rabbitmq_password
+        password = "guest"
       }
-      metrics = { enabled = true }
+      service = {
+        type = "ClusterIP"
+      }
+      persistence = {
+        enabled = false
+      }
+      volumePermissions = {
+        enabled = true
+      }
       resources = {
-        requests = { memory = "256Mi", cpu = "250m" }
-        limits   = { memory = "512Mi", cpu = "500m" }
-      }
-      securityContext = { runAsNonRoot = true, runAsUser = 999, fsGroup = 999 }
-    })
-  ]
-
-  depends_on = [kubernetes_namespace.shopping_app]
-}
-
-resource "helm_release" "ingress_nginx" {
-  name       = "ingress-nginx"
-  repository = "https://kubernetes.github.io/ingress-nginx"
-  chart      = "ingress-nginx"
-  version    = var.ingress_chart_version
-  namespace  = "ingress-nginx"
-  create_namespace = true
-
-  values = [
-    yamlencode({
-      controller = {
-        service = { type = "NodePort" }
-        resources = {
-          requests = { memory = "128Mi", cpu = "100m" }
-          limits   = { memory = "256Mi", cpu = "200m" }
+        requests = {
+          cpu    = "100m"
+          memory = "256Mi"
         }
-        securityContext = { runAsNonRoot = true, runAsUser = 101 }
+        limits = {
+          cpu    = "300m"
+          memory = "512Mi"
+        }
       }
     })
   ]
 }
 
-resource "kubernetes_service_account" "shopping_app" {
+##############################
+# Shopping App Deployments
+##############################
+resource "kubernetes_deployment" "login_service" {
   metadata {
-    name      = "${local.app_name}-sa"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
+    name      = "login-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+    labels = {
+      app = "login-service"
+    }
   }
-}
-
-resource "kubernetes_role" "shopping_app" {
-  metadata {
-    name      = "${local.app_name}-role"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-  }
-
-  rule {
-    api_groups = [""]
-    resources  = ["pods", "services", "configmaps", "secrets"]
-    verbs      = ["get", "list", "watch"]
-  }
-}
-
-resource "kubernetes_role_binding" "shopping_app" {
-  metadata {
-    name      = "${local.app_name}-role-binding"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.shopping_app.metadata[0].name
-  }
-
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.shopping_app.metadata[0].name
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-  }
-}
-
-resource "kubernetes_network_policy" "shopping_app" {
-  metadata {
-    name      = "${local.app_name}-network-policy"
-    namespace = kubernetes_namespace.shopping_app.metadata[0].name
-  }
-
   spec {
-    pod_selector {
-      match_labels = { app = local.app_name }
-    }
-
-    policy_types = ["Ingress", "Egress"]
-
-    ingress {
-      from {
-        namespace_selector {
-          match_labels = {
-            name = "ingress-nginx"
-          }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = 3000
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "login-service"
       }
     }
-
-    egress {
-      to {
-        namespace_selector {
-          match_labels = {
-            name = local.namespace
-          }
+    template {
+      metadata {
+        labels = {
+          app = "login-service"
         }
       }
-      ports {
-        protocol = "TCP"
-        port     = 3000
+      spec {
+        container {
+          name  = "login-service"
+          image = "your-dockerhub-username/login-service:latest"
+          port {
+            container_port = 3001
+          }
+        }
       }
     }
   }
 }
 
+resource "kubernetes_service" "login_service" {
+  metadata {
+    name      = "login-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "login-service"
+    }
+    port {
+      port        = 3001
+      target_port = 3001
+    }
+    type = "ClusterIP"
+  }
+}
 
+##############################
+# Order Service
+##############################
+resource "kubernetes_deployment" "order_service" {
+  metadata {
+    name      = "order-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+    labels = {
+      app = "order-service"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "order-service"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "order-service"
+        }
+      }
+      spec {
+        container {
+          name  = "order-service"
+          image = "your-dockerhub-username/order-service:latest"
+          port {
+            container_port = 3002
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "order_service" {
+  metadata {
+    name      = "order-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "order-service"
+    }
+    port {
+      port        = 3002
+      target_port = 3002
+    }
+    type = "ClusterIP"
+  }
+}
+
+##############################
+# Payment Service
+##############################
+resource "kubernetes_deployment" "payment_service" {
+  metadata {
+    name      = "payment-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+    labels = {
+      app = "payment-service"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "payment-service"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "payment-service"
+        }
+      }
+      spec {
+        container {
+          name  = "payment-service"
+          image = "your-dockerhub-username/payment-service:latest"
+          port {
+            container_port = 3003
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "payment_service" {
+  metadata {
+    name      = "payment-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "payment-service"
+    }
+    port {
+      port        = 3003
+      target_port = 3003
+    }
+    type = "ClusterIP"
+  }
+}
+
+##############################
+# Inventory Service
+##############################
+resource "kubernetes_deployment" "inventory_service" {
+  metadata {
+    name      = "inventory-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+    labels = {
+      app = "inventory-service"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "inventory-service"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "inventory-service"
+        }
+      }
+      spec {
+        container {
+          name  = "inventory-service"
+          image = "your-dockerhub-username/inventory-service:latest"
+          port {
+            container_port = 3004
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "inventory_service" {
+  metadata {
+    name      = "inventory-service"
+    namespace = kubernetes_namespace.shopping.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "inventory-service"
+    }
+    port {
+      port        = 3004
+      target_port = 3004
+    }
+    type = "ClusterIP"
+  }
+}
