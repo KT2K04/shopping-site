@@ -182,13 +182,31 @@ resource "kubernetes_network_policy" "shopping_app" {
     policy_types = ["Ingress", "Egress"]
 
     ingress {
-      from { namespace_selector { match_labels = { name = "ingress-nginx" } } }
-      ports { protocol = "TCP" port = 3000 }
+      from {
+        namespace_selector {
+          match_labels = {
+            name = "ingress-nginx"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = 3000
+      }
     }
 
     egress {
-      to { namespace_selector { match_labels = { name = local.namespace } } }
-      ports { protocol = "TCP" port = 3000 }
+      to {
+        namespace_selector {
+          match_labels = {
+            name = local.namespace
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = 3000
+      }
     }
   }
 }
